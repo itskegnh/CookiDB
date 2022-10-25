@@ -1,62 +1,239 @@
-import flask, pymongo, os, random, string, time
+import flask, os, json, random, string, time
 
-mongo_secret = os.getenv('MONGO')
-if mongo_secret is None:
-    with open('mongo.secret') as f:
-        mongo_secret = f.read().strip()
+# data/refer.json
+#    stores information about which shard a database is on
 
-client = pymongo.MongoClient(mongo_secret)
-db = client['CookiDB']
-collection = db['databases']
+# data/auth/shard-0.json
+# data/auth/shard-1.json
+# ...
+
+# data/db/shard-0.json
+# data/db/shard-1.json
+# ...
+
+# open ~/.cooki_config
+#    read in the data
+#    if it doesn't exist, create it
+#    if it does exist, check if it's valid
+
+CONFIG_PATH = os.path.expanduser('~/.cooki_config')
+
+if not os.path.exists(CONFIG_PATH):
+    config = {
+        'shards': 10,
+        'data_path': os.path.expanduser('~/cookidat/'),
+    }
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(config, f)
+    
+with open(CONFIG_PATH, 'r') as f:
+    config = json.load(f)
+    SHARDS = config['shards']
+    DATA_PATH = config['data_path']
+
+# create DATA_PATH if it doesn't exist
+if not os.path.exists(DATA_PATH):
+    os.makedirs(DATA_PATH)
+
+# create DATA_PATH/auth if it doesn't exist
+if not os.path.exists(os.path.join(DATA_PATH, 'auth')):
+    os.makedirs(os.path.join(DATA_PATH, 'auth'))
+
+# create DATA_PATH/db if it doesn't exist
+if not os.path.exists(os.path.join(DATA_PATH, 'db')):
+    os.makedirs(os.path.join(DATA_PATH, 'db'))
 
 app = flask.Flask(__name__)
+
+def read_data(filename):
+    if not os.path.exists(os.path.join(DATA_PATH, filename)):
+        return {}
+    with open(os.path.join(DATA_PATH, filename + '.json'), 'r') as f:
+        data = json.load(f)
+    return data
+
+def write_data(filename, data):
+    with open(os.path.join(DATA_PATH, filename), 'w') as f:
+        json.dump(data, f)
+
+def generate_id(length):
+    chars = string.ascii_letters + string.digits
+    return ''.join(random.choice(chars) for _ in range(length))
 
 @app.route('/')
 def index():
     return flask.redirect('https://github.com/itskegnh/CookiDB')
 
-@app.route('/create', methods=['GET'])
-def create():
-    generate_id = lambda x: ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(x))
-    x = 9
-    while True:
-        database_id = generate_id(x)
-        if collection.find_one({'_id': database_id}) is None: break
-        x += 1
-    token = generate_id(32)
-    data = {
-        '_id': database_id,
-        'token': token,
-        'data': {},
-        'created': int(time.time()),
-    }
-    collection.insert_one(data)
-    return flask.jsonify(data)
-
-@app.route('/db', methods=['GET', 'POST', 'DELETE'])
+@app.route('/database', methods=['GET', 'DELETE', 'CREATE', 'PATCH', 'PUT'])
 def database():
-    database_id = flask.request.args.get('id')
-    overwrite = flask.request.args.get('overwrite', 'false').lower() == 'true'
-    token = flask.request.headers.get('Authorization')
-    if database_id is None or token is None: return flask.jsonify({'error': 'Missing id or token'}), 400
-    data = collection.find_one({'_id': database_id})
-    if data is None: return flask.jsonify({'error': 'Database not found'}), 404
-    if data.get('token', None) != token: return flask.jsonify({'error': 'Invalid token'}), 401
-    
-    if flask.request.method == 'GET':
-        return flask.jsonify(data['data'])
-    elif flask.request.method == 'POST':
-        data['data'] = flask.request.get_json()
-        if overwrite:
-            collection.update_one({'_id': database_id}, {'$set': {'data': data['data']}})
-        else:
-            data = collection.find_one({'_id': database_id})
-            data['data'].update(flask.request.get_json())
-            collection.update_one({'_id': database_id}, {'$set': {'data': data['data']}})
-        return flask.jsonify({'success': True})
+    if flask.request.method == 'CREATE':
+        # Create a new database
+        shard_id = random.randint(1, SHARDS)-1
+        while True:
+            _id = generate_id(32)
+            refer = read_data('refer')
+            if _id not in refer:
+                break
+        
+        # Update refer file
+        refer[_id] = shard_id
+        write_data('refer.json', refer)
+
+        # Update AUTH Shard
+        token = generate_id(72)
+        auth = read_data('auth/shard-%s' % shard_id)
+        auth[_id] = {
+            'token': token,
+            'created': time.time(),
+            'last_interaction': time.time(),
+            'interactions': 0,
+        }
+        write_data('auth/shard-%s.json' % shard_id, auth)
+
+        # Update DB Shard
+        db = read_data('db/shard-%s' % shard_id)
+        db[_id] = {}
+        write_data('db/shard-%s.json' % shard_id, db)
+
+        return flask.jsonify({
+            'database': _id,
+            'token': token,
+        })
     elif flask.request.method == 'DELETE':
-        collection.delete_one({'_id': database_id})
-        return flask.jsonify({'success': True})
+        # Delete an existing database
+        _id = flask.request.args.get('id')
+        token = flask.request.headers.get('Authorization')
+        refer = read_data('refer')
+        if _id not in refer:
+            return flask.jsonify({
+                'error': 'Database does not exist',
+            }), 404
+        shard_id = refer[_id]
+
+        # Validate Authentication
+        auth = read_data('auth/shard-%s' % shard_id)
+        if token is None or auth.get(_id, {}).get('token', None) != token:
+            return flask.jsonify({
+                'error': 'Invalid token',
+            }), 401
+        
+        # Clear AUTH Shard
+        auth = read_data('auth/shard-%s' % shard_id)
+        del auth[_id]
+        write_data('auth/shard-%s.json' % shard_id, auth)
+
+        # Clear DB Shard
+        db = read_data('db/shard-%s' % shard_id)
+        del db[_id]
+        write_data('db/shard-%s.json' % shard_id, db)
+
+        # Clear refer file
+        refer = read_data('refer')
+        del refer[_id]
+        write_data('refer.json', refer)
+
+        return flask.jsonify({
+            'success': True,
+        })
+    elif flask.request.method == 'GET':
+        # View a database
+        _id = flask.request.args.get('id')
+        token = flask.request.headers.get('Authorization')
+        key = flask.request.args.get('key')
+
+        refer = read_data('refer')
+        if _id not in refer:
+            return flask.jsonify({
+                'error': 'Database does not exist',
+            }), 404
+        shard_id = refer[_id]
+
+        # Validate Authentication
+        auth = read_data('auth/shard-%s' % shard_id)
+        if token is None or auth.get(_id, {}).get('token', None) != token:
+            return flask.jsonify({
+                'error': 'Invalid token',
+            }), 401
+        
+        # Update AUTH Shard
+        auth = read_data('auth/shard-%s' % shard_id)
+        auth[_id]['last_interaction'] = time.time()
+        auth[_id]['interactions'] += 1
+        write_data('auth/shard-%s.json' % shard_id, auth)
+
+        # Return DB Shard
+        db = read_data('db/shard-%s' % shard_id)
+        if key is None:
+            return flask.jsonify(db[_id])
+        return flask.jsonify(db[_id].get(key, None))
+    elif flask.request.method == 'PUT':
+        # Write to database
+        _id = flask.request.args.get('id')
+        token = flask.request.headers.get('Authorization')
+        data = flask.request.json
+
+        refer = read_data('refer')
+        if _id not in refer:
+            return flask.jsonify({
+                'error': 'Database does not exist',
+            }), 404
+        shard_id = refer[_id]
+
+        # Validate Authentication
+        auth = read_data('auth/shard-%s' % shard_id)
+        if token is None or auth.get(_id, {}).get('token', None) != token:
+            return flask.jsonify({
+                'error': 'Invalid token',
+            }), 401
+        
+        # Update AUTH Shard
+        auth = read_data('auth/shard-%s' % shard_id)
+        auth[_id]['last_interaction'] = time.time()
+        auth[_id]['interactions'] += 1
+        write_data('auth/shard-%s.json' % shard_id, auth)
+
+        # Update DB Shard
+        db = read_data('db/shard-%s' % shard_id)
+        db[_id] = data
+        write_data('db/shard-%s.json' % shard_id, db)
+
+        return flask.jsonify({
+            'success': True,
+        })
+    elif flask.request.method == 'PATCH':
+        # Update a database
+        _id = flask.request.args.get('id')
+        token = flask.request.headers.get('Authorization')
+        data = flask.request.json
+        
+        refer = read_data('refer')
+        if _id not in refer:
+            return flask.jsonify({
+                'error': 'Database does not exist',
+            }), 404
+        shard_id = refer[_id]
+
+        # Validate Authentication
+        auth = read_data('auth/shard-%s' % shard_id)
+        if token is None or auth.get(_id, {}).get('token', None) != token:
+            return flask.jsonify({
+                'error': 'Invalid token',
+            }), 401
+        
+        # Update AUTH Shard
+        auth = read_data('auth/shard-%s' % shard_id)
+        auth[_id]['last_interaction'] = time.time()
+        auth[_id]['interactions'] += 1
+        write_data('auth/shard-%s.json' % shard_id, auth)
+
+        # Update DB Shard
+        db = read_data('db/shard-%s' % shard_id)
+        db[_id].update(data)
+        write_data('db/shard-%s.json' % shard_id, db)
+
+        return flask.jsonify({
+            'success': True,
+        })
 
 if __name__ == '__main__':
     app.run(debug=True)
