@@ -73,6 +73,8 @@ Authorization: AUTH_TOKEN
 }
 ```
 
+# GET DATABASE ID AND AUTH TOKEN
+[CLICK HERE](http://db.cooki.lol/create) and copy the database ID and auth token.
 
 ## Example
 ```py

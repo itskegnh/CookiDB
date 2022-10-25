@@ -1,4 +1,6 @@
 import flask, os, json, random, string, time
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # data/refer.json
 #    stores information about which shard a database is on
@@ -45,6 +47,8 @@ if not os.path.exists(os.path.join(DATA_PATH, 'db')):
 
 app = flask.Flask(__name__)
 
+limiter = Limiter(app, key_func=get_remote_address)
+
 def read_data(filename):
     if not os.path.exists(os.path.join(DATA_PATH, filename)):
         return {}
@@ -64,42 +68,46 @@ def generate_id(length):
 def index():
     return flask.redirect('https://github.com/itskegnh/CookiDB')
 
-@app.route('/database', methods=['GET', 'DELETE', 'CREATE', 'PATCH', 'PUT'])
+@app.route('/create')
+@limiter.limit('1/minute')
+def create():
+    # Create a new database
+    shard_id = random.randint(1, SHARDS)-1
+    while True:
+        _id = generate_id(32)
+        refer = read_data('refer')
+        if _id not in refer:
+            break
+    
+    # Update refer file
+    refer[_id] = shard_id
+    write_data('refer.json', refer)
+
+    # Update AUTH Shard
+    token = generate_id(72)
+    auth = read_data('auth/shard-%s' % shard_id)
+    auth[_id] = {
+        'token': token,
+        'created': time.time(),
+        'last_interaction': time.time(),
+        'interactions': 0,
+    }
+    write_data('auth/shard-%s.json' % shard_id, auth)
+
+    # Update DB Shard
+    db = read_data('db/shard-%s' % shard_id)
+    db[_id] = {}
+    write_data('db/shard-%s.json' % shard_id, db)
+
+    return flask.jsonify({
+        'database': _id,
+        'token': token,
+    })
+
+@app.route('/database', methods=['GET', 'DELETE', 'PATCH', 'PUT'])
+@limiter.limit('5/second')
 def database():
-    if flask.request.method == 'CREATE':
-        # Create a new database
-        shard_id = random.randint(1, SHARDS)-1
-        while True:
-            _id = generate_id(32)
-            refer = read_data('refer')
-            if _id not in refer:
-                break
-        
-        # Update refer file
-        refer[_id] = shard_id
-        write_data('refer.json', refer)
-
-        # Update AUTH Shard
-        token = generate_id(72)
-        auth = read_data('auth/shard-%s' % shard_id)
-        auth[_id] = {
-            'token': token,
-            'created': time.time(),
-            'last_interaction': time.time(),
-            'interactions': 0,
-        }
-        write_data('auth/shard-%s.json' % shard_id, auth)
-
-        # Update DB Shard
-        db = read_data('db/shard-%s' % shard_id)
-        db[_id] = {}
-        write_data('db/shard-%s.json' % shard_id, db)
-
-        return flask.jsonify({
-            'database': _id,
-            'token': token,
-        })
-    elif flask.request.method == 'DELETE':
+    if flask.request.method == 'DELETE':
         # Delete an existing database
         _id = flask.request.args.get('id')
         token = flask.request.headers.get('Authorization')
