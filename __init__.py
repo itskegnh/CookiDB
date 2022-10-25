@@ -103,6 +103,7 @@ def database():
         # Delete an existing database
         _id = flask.request.args.get('id')
         token = flask.request.headers.get('Authorization')
+        key = flask.request.args.get('key')
         refer = read_data('refer')
         if _id not in refer:
             return flask.jsonify({
@@ -117,20 +118,19 @@ def database():
                 'error': 'Invalid token',
             }), 401
         
-        # Clear AUTH Shard
+        # Update AUTH Shard
         auth = read_data('auth/shard-%s' % shard_id)
-        del auth[_id]
+        auth[_id]['last_interaction'] = time.time()
+        auth[_id]['interactions'] += 1
         write_data('auth/shard-%s.json' % shard_id, auth)
 
-        # Clear DB Shard
+        # Update DB Shard
         db = read_data('db/shard-%s' % shard_id)
-        del db[_id]
+        if key is None:
+            db.pop(_id)
+        else:
+            db[_id].pop(key, None)
         write_data('db/shard-%s.json' % shard_id, db)
-
-        # Clear refer file
-        refer = read_data('refer')
-        del refer[_id]
-        write_data('refer.json', refer)
 
         return flask.jsonify({
             'success': True,
