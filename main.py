@@ -29,7 +29,6 @@ def create():
         'token': token,
         'data': {},
         'created': int(time.time()),
-        'timeout': int(time.time()) + 60 * 60 * 24 * 7, # 1 week
     }
     collection.insert_one(data)
     return flask.jsonify(data)
@@ -58,8 +57,6 @@ def database():
     elif flask.request.method == 'DELETE':
         collection.delete_one({'_id': database_id})
         return flask.jsonify({'success': True})
-
-    
 
 if __name__ == '__main__':
     app.run(debug=True)
