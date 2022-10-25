@@ -58,3 +58,8 @@ class Database:
     
     def __len__(self):
         return len(self.read())
+
+if __name__ == "__main__":
+    db = Database.connect("i3he10mvs", "of1gkclato167hrs1vuq9x15az0xgdpo")
+    db.read()
+    # db.delete()

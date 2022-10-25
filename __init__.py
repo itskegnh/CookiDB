@@ -1,6 +1,6 @@
 import flask, pymongo, os, random, string, time
 
-mongo_secret = os.getenv('TOKEN')
+mongo_secret = os.getenv('MONGO')
 if mongo_secret is None:
     with open('mongo.secret') as f:
         mongo_secret = f.read().strip()
