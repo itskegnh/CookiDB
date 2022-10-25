@@ -1,7 +1,7 @@
 import requests, json
 
 class Database:
-    ENDPOINT = 'http://127.0.0.1:5000/'
+    ENDPOINT = 'http://db.cooki.lol/'
     def __init__(self, database_id, token):
         self.id = database_id
         self.token = token
