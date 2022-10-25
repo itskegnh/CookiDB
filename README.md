@@ -72,3 +72,34 @@ Authorization: AUTH_TOKEN
     "KEY": "UPDATED_VALUE",
 }
 ```
+
+
+## Example
+```py
+import cookidb # /wrappers/cookidb.py
+
+db = cookidb.Database(
+    # /create response
+    {
+        "database": "DATABASE_ID",
+        "token": "AUTH_TOKEN"
+    }
+)
+
+# CLEAR DATABASE
+db.clear(key=None)
+
+# READ DATABASE
+db.read(key=None)
+
+# WRITE DATABASE
+db.write({
+    "KEY": "VALUE",
+    "ANOTHER_KEY": "ANOTHER_VALUE"
+})
+
+# UPDATE DATABASE
+db.update({
+    "KEY": "UPDATED_VALUE",
+})
+```
