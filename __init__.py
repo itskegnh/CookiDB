@@ -79,8 +79,9 @@ def create():
         if _id not in refer:
             break
     
+    refer = read_data('refer')
     # Update refer file
-    refer[_id] = shard_id
+    refer.update({_id: shard_id})
     write_data('refer.json', refer)
 
     # Update AUTH Shard
